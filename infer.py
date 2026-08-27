@@ -45,45 +45,46 @@ def main() -> None:
     device = choose_device(args.device)
     model, checkpoint = load_model(args.checkpoint, device)
     preprocess = ImagePreprocessor(size=int(checkpoint.get("image_size", 224)), augment=False)
-    rows = []
-    for path in paths:
-        try:
-            # EXIF is deliberately ignored, so malformed EXIF warnings are not useful.
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=r"Corrupt EXIF data.*", category=UserWarning)
-                with Image.open(path) as opened:
-                    image = opened.convert("RGB")
-                    image.load()  # Surface lazy decoder failures here so the run can continue.
-        except (UnidentifiedImageError, OSError, ValueError) as exc:
-            error = f"{type(exc).__name__}: {exc}"
-            print(f"{path}\nstatus: error\nerror: {error}")
-            rows.append({"path": str(path), "predicted_correction": "", "status": "error",
-                         "probability_0": "", "probability_90": "", "probability_180": "",
-                         "probability_270": "", "confidence": "", "error": error})
-            continue
-        tensor = preprocess(image).unsqueeze(0).to(device)
-        with torch.inference_mode():
-            probabilities = model(tensor).softmax(1)[0].cpu().tolist()
-        label = max(range(4), key=probabilities.__getitem__)
-        correction, confidence = CORRECTION_DEGREES[label], probabilities[label]
-        status = "ok" if confidence >= args.confidence_threshold else "uncertain"
-        print(f"{path}\ncorrection: {correction}° ({status})\nconfidence: {confidence:.3f}")
-        print("\n".join(f"{degrees}°: {probability:.3f}" for degrees, probability in zip(CORRECTION_DEGREES, probabilities)))
-        rows.append({"path": str(path), "predicted_correction": correction, "status": status,
-                     "probability_0": probabilities[0], "probability_90": probabilities[1],
-                     "probability_180": probabilities[2], "probability_270": probabilities[3],
-                     "confidence": confidence, "error": ""})
-        if args.output_dir:
-            relative = path.relative_to(base)
-            destination = args.output_dir / relative
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            rotate_clockwise(image, correction).save(destination)
     csv_path = args.csv or ((args.output_dir / "predictions.csv") if args.output_dir else Path("predictions.csv"))
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
-        writer.writerows(rows)
+        handle.flush()
+        for path in paths:
+            try:
+                # EXIF is deliberately ignored, so malformed EXIF warnings are not useful.
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message=r"Corrupt EXIF data.*", category=UserWarning)
+                    with Image.open(path) as opened:
+                        image = opened.convert("RGB")
+                        image.load()  # Surface lazy decoder failures here so the run can continue.
+            except (UnidentifiedImageError, OSError, ValueError) as exc:
+                error = f"{type(exc).__name__}: {exc}"
+                print(f"{path}\nstatus: error\nerror: {error}")
+                writer.writerow({"path": str(path), "predicted_correction": "", "status": "error",
+                                 "probability_0": "", "probability_90": "", "probability_180": "",
+                                 "probability_270": "", "confidence": "", "error": error})
+                handle.flush()
+                continue
+            tensor = preprocess(image).unsqueeze(0).to(device)
+            with torch.inference_mode():
+                probabilities = model(tensor).softmax(1)[0].cpu().tolist()
+            label = max(range(4), key=probabilities.__getitem__)
+            correction, confidence = CORRECTION_DEGREES[label], probabilities[label]
+            status = "ok" if confidence >= args.confidence_threshold else "uncertain"
+            print(f"{path}\ncorrection: {correction}° ({status})\nconfidence: {confidence:.3f}")
+            print("\n".join(f"{degrees}°: {probability:.3f}" for degrees, probability in zip(CORRECTION_DEGREES, probabilities)))
+            writer.writerow({"path": str(path), "predicted_correction": correction, "status": status,
+                             "probability_0": probabilities[0], "probability_90": probabilities[1],
+                             "probability_180": probabilities[2], "probability_270": probabilities[3],
+                             "confidence": confidence, "error": ""})
+            handle.flush()
+            if args.output_dir:
+                relative = path.relative_to(base)
+                destination = args.output_dir / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                rotate_clockwise(image, correction).save(destination)
     print(f"wrote CSV: {csv_path}")
 
 

@@ -67,7 +67,7 @@ python infer.py photos --checkpoint checkpoints/best.pt \
 
 Low-confidence results are marked `uncertain`. Corrected files are written under a separate output tree and sources are never modified. Predictions still appear in the CSV so threshold behavior can be analyzed later.
 
-Corrupt images and formats unsupported by the installed Pillow build are reported with `status=error` and an explanation in the CSV's `error` column. They are skipped without stopping a recursive directory run. Because EXIF orientation is intentionally ignored, malformed EXIF warnings are suppressed.
+Corrupt images and formats unsupported by the installed Pillow build are reported with `status=error` and an explanation in the CSV's `error` column. They are skipped without stopping a recursive directory run. Because EXIF orientation is intentionally ignored, malformed EXIF warnings are suppressed. The CSV header is created before inference and every result is flushed immediately, preserving completed work if the process is interrupted later.
 
 ### CPU inference and large source images
 
