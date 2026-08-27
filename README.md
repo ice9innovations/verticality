@@ -97,6 +97,54 @@ python infer.py photos \
 
 Add `--output-dir results/corrected` only when corrected copies are wanted. Keep the output directory outside the input tree, and ensure enough storage is available. Source photographs are never overwritten.
 
+## Private orientation-review album
+
+`review_app.py` builds a local web album from an inference CSV. It preserves the source directory hierarchy as albums, displays small thumbnails in the model's proposed orientation, and saves every manual acceptance or correction immediately in SQLite. Full-resolution photographs are never served to the browser.
+
+Scanner-generated enhancement files ending in `_a` are collapsed into the same logical photo as their base file (for example, `photo_0006.tif` and `photo_0006_a.tif`). The album shows one card with a variant count, and the accepted correction is atomically applied to every variant. Files ending in `_b` remain separate because they commonly represent a scanned reverse side.
+
+All generated thumbnails, review state, and exported labels live under `private-review/` by default. That directory is ignored by Git and must remain private.
+
+After directory inference has produced a CSV, prepare the review workspace:
+
+```bash
+python review_app.py prepare \
+  --images /path/to/photos \
+  --predictions results/predictions.csv \
+  --workspace private-review
+```
+
+Preparation is resumable. Run it again after an interrupted thumbnail pass or after the inference CSV gains more rows. Existing thumbnails and manual reviews are preserved.
+
+Start the web application, bound only to the local machine:
+
+```bash
+python review_app.py serve --workspace private-review --host 127.0.0.1 --port 8080
+```
+
+Open `http://127.0.0.1:8080`. If the photos are on a remote machine, create an SSH tunnel from your laptop and then open the same local URL:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@photo-server
+```
+
+Albums appear in the sidebar with reviewed/total counts. Use the buttons or keyboard: left/right arrows rotate the selected image, Space or Enter accepts it, and J/K moves through the page. The default view shows only unreviewed images; uncertain and error inputs have a separate filter.
+
+Export the reviewed orientation labels without copying photographs:
+
+```bash
+python review_app.py export --workspace private-review \
+  --reviewed-only --output private-review/reviewed-orientations.csv
+```
+
+The exported `selected_correction` is the final clockwise rotation to apply to the original file. To additionally create full-resolution corrected copies in a separate tree:
+
+```bash
+python review_app.py export --workspace private-review \
+  --reviewed-only --output private-review/reviewed-orientations.csv \
+  --corrected-dir /path/to/corrected-photos
+```
+
 ## Experimental caveats
 
 COCO is only assumed to be normally oriented; occasional mislabeled source orientation becomes label noise. A confidence threshold is not a calibration guarantee. Evaluate on a separately curated wild-photo set (including all four rotations per source) before interpreting generalization, and inspect confusion between 0°/180° and 90°/270° rather than relying only on overall accuracy.

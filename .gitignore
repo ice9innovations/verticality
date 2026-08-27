@@ -2,6 +2,7 @@
 __pycache__/
 data/
 checkpoints/
+private-review/
 *.py[codz]
 *$py.class
 
