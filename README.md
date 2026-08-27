@@ -179,6 +179,8 @@ python crop_scans.py analyze \
 
 Review `private-crops/index.html` and `private-crops/crop-report.csv`. Red rectangles are proposed crop boundaries. The workspace is ignored by Git. You can manually change a CSV row's status before applying it; only rows whose status is `crop` are cropped.
 
+Detection is tight by default. If preserving a small paper margin is preferable, rerun analysis with an explicit value such as `--padding-percent 0.4`.
+
 Write cropped files to a separate directory, optionally copying scans marked unchanged so the output is a complete mirrored collection:
 
 ```bash

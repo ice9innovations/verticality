@@ -40,7 +40,8 @@ def longest_run(active: np.ndarray) -> tuple[int, int] | None:
 
 
 def detect_photo(image: Image.Image, analysis_size: int = 1200,
-                 color_distance: int = 24, min_occupancy: float = 0.025) -> dict:
+                 color_distance: int = 24, min_occupancy: float = 0.025,
+                 padding_fraction: float = 0.0) -> dict:
     """Return a conservative axis-aligned crop proposal in original pixels."""
     original_width, original_height = image.size
     preview = image.convert("RGB")
@@ -75,7 +76,7 @@ def detect_photo(image: Image.Image, analysis_size: int = 1200,
                 "box": (0, 0, original_width, original_height)}
     top, bottom = row_run
     left, right = col_run
-    margin = max(2, round(min(width, height) * 0.004))
+    margin = max(0, round(min(width, height) * padding_fraction))
     left, top = max(0, left - margin), max(0, top - margin)
     right, bottom = min(width, right + margin), min(height, bottom + margin)
     retained = (right - left) * (bottom - top) / (width * height)
@@ -104,7 +105,7 @@ def preview_path(workspace: Path, source: Path) -> Path:
 
 
 def analyze_one(task) -> dict:
-    source_text, album, relative_text, workspace_text, analysis_size = task
+    source_text, album, relative_text, workspace_text, analysis_size, padding_fraction = task
     source, workspace = Path(source_text), Path(workspace_text)
     row = {"source_path": str(source), "album": album, "relative_path": relative_text,
            "status": "error", "confidence": 0.0, "left": "", "top": "", "right": "",
@@ -116,7 +117,8 @@ def analyze_one(task) -> dict:
             with Image.open(source) as opened:
                 image = opened.convert("RGB")
                 image.load()
-        result = detect_photo(image, analysis_size=analysis_size)
+        result = detect_photo(image, analysis_size=analysis_size,
+                              padding_fraction=padding_fraction)
         box = result["box"]
         row.update({"status": result["status"], "confidence": f'{result["confidence"]:.4f}',
                     "left": box[0], "top": box[1], "right": box[2], "bottom": box[3],
@@ -127,14 +129,13 @@ def analyze_one(task) -> dict:
             scale_x, scale_y = shown.width / image.width, shown.height / image.height
             display_box = [round(value * scale) for value, scale in zip(
                 box, (scale_x, scale_y, scale_x, scale_y))]
-            # Pillow draws thick rectangle strokes inward. Put a thin stroke
-            # just outside the proposal so it does not hide photograph pixels
-            # and make a correct crop appear systematically too tight.
-            display_box = [max(1, display_box[0] - 4), max(1, display_box[1] - 4),
-                           min(shown.width - 2, display_box[2] + 4),
-                           min(shown.height - 2, display_box[3] + 4)]
+            # A one-pixel stroke marks the actual proposal coordinate. Only
+            # full-frame edges are inset enough to remain visible.
+            display_box = [max(1, display_box[0]), max(1, display_box[1]),
+                           min(shown.width - 2, display_box[2]),
+                           min(shown.height - 2, display_box[3])]
             draw = ImageDraw.Draw(shown)
-            draw.rectangle(display_box, outline=(255, 35, 35), width=3)
+            draw.rectangle(display_box, outline=(255, 35, 35), width=1)
         destination = preview_path(workspace, source)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shown.save(destination, "JPEG", quality=82)
@@ -144,7 +145,8 @@ def analyze_one(task) -> dict:
     return row
 
 
-def source_tasks(inputs: list[Path], workspace: Path, analysis_size: int) -> list[tuple]:
+def source_tasks(inputs: list[Path], workspace: Path, analysis_size: int,
+                 padding_fraction: float) -> list[tuple]:
     tasks = []
     for root in inputs:
         root = root.resolve()
@@ -153,7 +155,7 @@ def source_tasks(inputs: list[Path], workspace: Path, analysis_size: int) -> lis
         for source in sorted(root.rglob("*")):
             if source.is_file() and source.suffix.lower() in IMAGE_EXTENSIONS:
                 tasks.append((str(source.resolve()), root.name, source.relative_to(root).as_posix(),
-                              str(workspace.resolve()), analysis_size))
+                              str(workspace.resolve()), analysis_size, padding_fraction))
     if not tasks:
         raise RuntimeError("No supported scans found")
     return tasks
@@ -161,7 +163,8 @@ def source_tasks(inputs: list[Path], workspace: Path, analysis_size: int) -> lis
 
 def analyze(args) -> None:
     args.workspace.mkdir(parents=True, exist_ok=True)
-    tasks = source_tasks(args.input, args.workspace, args.analysis_size)
+    tasks = source_tasks(args.input, args.workspace, args.analysis_size,
+                         args.padding_percent / 100)
     if args.workers == 1:
         results = map(analyze_one, tasks)
     else:
@@ -196,7 +199,7 @@ def analyze(args) -> None:
 article{border:2px solid #444;background:#222;padding:8px;overflow:hidden}article.uncertain{border-color:#e0aa45}
 article.crop{border-color:#63b887}article.error{border-color:#d86868}img{width:100%;height:260px;object-fit:contain;background:#111}
 b{display:inline-block;margin:6px 8px 2px 0}span{color:#aaa}article div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style>
-<h1>Scan crop review</h1><p>Thin red rectangles sit just outside the proposed crop. Uncertain cases appear first.</p><div class="grid">"""
+<h1>Scan crop review</h1><p>The one-pixel red rectangle marks the actual proposed crop. Uncertain cases appear first.</p><div class="grid">"""
     (args.workspace / "index.html").write_text(gallery + "".join(cards) + "</div>", encoding="utf-8")
     counts = {status: sum(row["status"] == status for row in rows)
               for status in ("crop", "unchanged", "uncertain", "error")}
@@ -247,6 +250,8 @@ def parser() -> argparse.ArgumentParser:
     scan.add_argument("--workspace", type=Path, default=Path("private-crops"))
     scan.add_argument("--workers", type=positive_int, default=1, metavar="N")
     scan.add_argument("--analysis-size", type=positive_int, default=1200)
+    scan.add_argument("--padding-percent", type=float, default=0.0,
+                      help="optional safety padding outside detected edges (default: 0)")
     scan.set_defaults(function=analyze)
     apply = commands.add_parser("apply", help="write approved crop proposals to a separate tree")
     apply.add_argument("--report", type=Path, default=Path("private-crops/crop-report.csv"))

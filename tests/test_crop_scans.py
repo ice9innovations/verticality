@@ -9,10 +9,10 @@ def test_detects_photo_inside_white_scan_page():
     result = detect_photo(page)
     assert result["status"] == "crop"
     left, top, right, bottom = result["box"]
-    assert abs(left - 180) < 10
-    assert abs(top - 120) < 10
-    assert abs(right - 821) < 10
-    assert abs(bottom - 681) < 10
+    assert abs(left - 180) < 3
+    assert abs(top - 120) < 3
+    assert abs(right - 821) < 3
+    assert abs(bottom - 681) < 3
 
 
 def test_leaves_edge_to_edge_photo_unchanged():
