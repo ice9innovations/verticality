@@ -146,6 +146,25 @@ python review_app.py export --workspace private-review \
   --corrected-dir /path/to/corrected-photos
 ```
 
+### Fine-tune on reviewed thumbnails
+
+Fine-tuning reconstructs each approved upright view from the proposed-orientation thumbnail, then creates balanced synthetic quarter-turn examples. The deterministic validation split is by logical photograph, so base and `_a` enhancement variants cannot leak across the split.
+
+```bash
+python train.py \
+  --review-workspace private-review \
+  --review-labels private-review/training-orientations.csv \
+  --init-checkpoint checkpoints/best.pt \
+  --checkpoint checkpoints/family-best.pt \
+  --epochs 8 \
+  --batch-size 256 \
+  --workers 8 \
+  --lr 3e-5 \
+  --device cuda
+```
+
+The original checkpoint is only read; the best family-photo validation checkpoint is written separately to `checkpoints/family-best.pt`.
+
 ## Experimental caveats
 
 COCO is only assumed to be normally oriented; occasional mislabeled source orientation becomes label noise. A confidence threshold is not a calibration guarantee. Evaluate on a separately curated wild-photo set (including all four rotations per source) before interpreting generalization, and inspect confusion between 0°/180° and 90°/270° rather than relying only on overall accuracy.

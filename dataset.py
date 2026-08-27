@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import random
+import csv
+import hashlib
 from pathlib import Path
 import torch
 from PIL import Image, ImageEnhance
@@ -100,3 +102,63 @@ class OrientationDataset(Dataset[tuple[torch.Tensor, int]]):
             tensor = self.preprocess(image, observed_clockwise=observed_quarters * 90)
         corrective_label = (-observed_quarters) % 4
         return tensor, corrective_label
+
+
+def review_group_key(relative_path: str) -> str:
+    path = Path(relative_path)
+    stem = path.stem[:-2] if path.stem.lower().endswith("_a") else path.stem
+    return (path.parent / f"{stem}{path.suffix.lower()}").as_posix()
+
+
+def review_thumbnail_path(workspace: str | Path, relative_path: str) -> Path:
+    digest = hashlib.sha1(Path(relative_path).as_posix().encode()).hexdigest()
+    return Path(workspace) / "thumbnails" / digest[:2] / f"{digest}.jpg"
+
+
+class ReviewOrientationDataset(Dataset[tuple[torch.Tensor, int]]):
+    """Synthetic rotations of human-approved upright review thumbnails."""
+
+    def __init__(self, workspace: str | Path, labels: str | Path, training: bool,
+                 size: int = 224, val_fraction: float = 0.2, seed: int = 42):
+        if not 0 < val_fraction < 1:
+            raise ValueError("val_fraction must be between 0 and 1")
+        rows = []
+        with Path(labels).open(newline="", encoding="utf-8") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("unknown", "0") == "1" or row.get("error", ""):
+                    continue
+                thumbnail = review_thumbnail_path(workspace, row["relative_path"])
+                if not thumbnail.is_file():
+                    continue
+                group = review_group_key(row["relative_path"])
+                digest = hashlib.sha256(f"{seed}:{group}".encode()).digest()
+                in_validation = int.from_bytes(digest[:8], "big") / 2**64 < val_fraction
+                if in_validation != (not training):
+                    continue
+                rows.append((thumbnail, int(row["predicted_correction"]),
+                             int(row["selected_correction"]), group))
+        if not rows:
+            split = "training" if training else "validation"
+            raise RuntimeError(f"No usable {split} review thumbnails found")
+        self.rows = rows
+        self.training = training
+        self.preprocess = ImagePreprocessor(size=size, augment=training)
+
+    def __len__(self) -> int:
+        # Four draws per source per training epoch gives the small review set
+        # enough updates; validation deterministically covers all rotations.
+        return 4 * len(self.rows)
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        if self.training:
+            thumbnail, predicted, selected, _ = self.rows[index % len(self.rows)]
+            observed_quarters = random.randrange(4)
+        else:
+            thumbnail, predicted, selected, _ = self.rows[index // 4]
+            observed_quarters = index % 4
+        with Image.open(thumbnail) as image:
+            # Stored thumbnails show the model proposal. Rotate by the human
+            # correction delta first to reconstruct the approved upright view.
+            upright = rotate_clockwise(image.convert("RGB"), selected - predicted)
+            tensor = self.preprocess(upright, observed_clockwise=observed_quarters * 90)
+        return tensor, (-observed_quarters) % 4
