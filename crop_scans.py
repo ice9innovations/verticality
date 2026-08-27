@@ -13,12 +13,12 @@ from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw, UnidentifiedImageError
+from PIL import Image, ImageDraw, ImageFilter, UnidentifiedImageError
 from tqdm import tqdm
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff", ".webp"}
 REPORT_FIELDS = ("source_path", "album", "relative_path", "status", "confidence",
-                 "left", "top", "right", "bottom", "width", "height", "preview", "error")
+                 "left", "top", "right", "bottom", "width", "height", "reason", "preview", "error")
 
 
 def positive_int(value: str) -> int:
@@ -50,16 +50,23 @@ def detect_photo(image: Image.Image, analysis_size: int = 1200,
     border = np.concatenate((pixels[0], pixels[-1], pixels[:, 0], pixels[:, -1]))
     background = np.median(border, axis=0)
     border_distance = np.max(np.abs(border - background), axis=1)
-    white_background = float(background.mean()) >= 220 and float((border_distance < color_distance).mean()) >= 0.80
+    white_background = float(background.mean()) >= 200 and float((border_distance < color_distance).mean()) >= 0.65
     if not white_background:
         return {"status": "unchanged", "confidence": 1.0,
+                "reason": "no uniform light page border",
                 "box": (0, 0, original_width, original_height)}
 
-    foreground = np.max(np.abs(pixels - background), axis=2) >= color_distance
+    distance = np.max(np.abs(pixels - background), axis=2).clip(0, 255).astype(np.uint8)
+    # Full-page scans often contain isolated dust, paper texture, or JPEG noise.
+    # Median filtering removes those dots before row/column projections without
+    # erasing a real photograph boundary.
+    smoothed = np.asarray(Image.fromarray(distance).filter(ImageFilter.MedianFilter(5)))
+    foreground = smoothed >= color_distance
     row_run = longest_run(foreground.mean(axis=1) >= min_occupancy)
     col_run = longest_run(foreground.mean(axis=0) >= min_occupancy)
     if row_run is None or col_run is None:
         return {"status": "uncertain", "confidence": 0.0,
+                "reason": "no single rectangular content region",
                 "box": (0, 0, original_width, original_height)}
     top, bottom = row_run
     left, right = col_run
@@ -69,9 +76,9 @@ def detect_photo(image: Image.Image, analysis_size: int = 1200,
     retained = (right - left) * (bottom - top) / (width * height)
     margins = (left / width, top / height, (width - right) / width, (height - bottom) / height)
     if retained < 0.08 or right - left < 40 or bottom - top < 40:
-        status, confidence = "uncertain", 0.0
+        status, confidence, reason = "uncertain", 0.0, "detected region is implausibly small"
     elif max(margins) < 0.02 or 1 - retained < 0.03:
-        status, confidence = "unchanged", 1.0
+        status, confidence, reason = "unchanged", 1.0, "content already fills the scan"
         left, top, right, bottom = 0, 0, width, height
     else:
         outside = np.ones((height, width), dtype=bool)
@@ -79,10 +86,11 @@ def detect_photo(image: Image.Image, analysis_size: int = 1200,
         outside_white = float((~foreground[outside]).mean()) if outside.any() else 0.0
         confidence = max(0.0, min(1.0, (outside_white - 0.75) / 0.25))
         status = "crop" if confidence >= 0.70 else "uncertain"
+        reason = "uniform whitespace outside photo" if status == "crop" else "outside region is not uniformly blank"
     scale_x, scale_y = original_width / width, original_height / height
     box = (round(left * scale_x), round(top * scale_y),
            round(right * scale_x), round(bottom * scale_y))
-    return {"status": status, "confidence": confidence, "box": box}
+    return {"status": status, "confidence": confidence, "reason": reason, "box": box}
 
 
 def preview_path(workspace: Path, source: Path) -> Path:
@@ -95,7 +103,7 @@ def analyze_one(task) -> dict:
     source, workspace = Path(source_text), Path(workspace_text)
     row = {"source_path": str(source), "album": album, "relative_path": relative_text,
            "status": "error", "confidence": 0.0, "left": "", "top": "", "right": "",
-           "bottom": "", "width": "", "height": "", "preview": "", "error": ""}
+           "bottom": "", "width": "", "height": "", "reason": "", "preview": "", "error": ""}
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
@@ -107,7 +115,7 @@ def analyze_one(task) -> dict:
         box = result["box"]
         row.update({"status": result["status"], "confidence": f'{result["confidence"]:.4f}',
                     "left": box[0], "top": box[1], "right": box[2], "bottom": box[3],
-                    "width": image.width, "height": image.height})
+                    "width": image.width, "height": image.height, "reason": result["reason"]})
         shown = image.copy()
         shown.thumbnail((700, 700), Image.Resampling.LANCZOS)
         if result["status"] in ("crop", "uncertain"):
@@ -164,6 +172,7 @@ def analyze(args) -> None:
         cards.append(f'<article class="{html.escape(row["status"])}">{image}'
                      f'<b>{html.escape(row["status"])}</b> '
                      f'<span>{html.escape(row["confidence"])}</span>'
+                     f'<div>{html.escape(row["reason"])}</div>'
                      f'<div>{html.escape(row["album"] + "/" + row["relative_path"])}</div></article>')
     gallery = """<!doctype html><meta charset="utf-8"><title>Scan crop review</title>
 <style>body{margin:20px;background:#151719;color:#eee;font:14px system-ui}h1{font-size:22px}
