@@ -105,6 +105,7 @@ def generate_thumbnail(task: tuple[str, str, int, int]) -> str:
     try:
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", message=r"Corrupt EXIF data.*", category=UserWarning)
+            warnings.filterwarnings("ignore", category=Image.DecompressionBombWarning)
             with Image.open(source) as opened:
                 image = opened.convert("RGB")
                 image.load()
