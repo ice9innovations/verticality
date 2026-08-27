@@ -127,13 +127,14 @@ def analyze_one(task) -> dict:
             scale_x, scale_y = shown.width / image.width, shown.height / image.height
             display_box = [round(value * scale) for value, scale in zip(
                 box, (scale_x, scale_y, scale_x, scale_y))]
-            # Keep full-frame proposals visibly inside the preview rather than
-            # drawing on a clipped outermost pixel.
-            display_box = [max(3, display_box[0]), max(3, display_box[1]),
-                           min(shown.width - 4, display_box[2]),
-                           min(shown.height - 4, display_box[3])]
+            # Pillow draws thick rectangle strokes inward. Put a thin stroke
+            # just outside the proposal so it does not hide photograph pixels
+            # and make a correct crop appear systematically too tight.
+            display_box = [max(1, display_box[0] - 4), max(1, display_box[1] - 4),
+                           min(shown.width - 2, display_box[2] + 4),
+                           min(shown.height - 2, display_box[3] + 4)]
             draw = ImageDraw.Draw(shown)
-            draw.rectangle(display_box, outline=(255, 35, 35), width=7)
+            draw.rectangle(display_box, outline=(255, 35, 35), width=3)
         destination = preview_path(workspace, source)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shown.save(destination, "JPEG", quality=82)
@@ -178,8 +179,12 @@ def analyze(args) -> None:
     for row in sorted(rows, key=lambda item: ({"uncertain": 0, "crop": 1, "error": 2,
                                                "unchanged": 3}.get(item["status"], 4),
                                               item["album"], item["relative_path"])):
-        image = (f'<img loading="lazy" src="{html.escape(row["preview"])}">'
-                 if row["preview"] else "")
+        if row["preview"]:
+            preview_file = args.workspace / row["preview"]
+            version = preview_file.stat().st_mtime_ns
+            image = f'<img loading="lazy" src="{html.escape(row["preview"])}?v={version}">'
+        else:
+            image = ""
         cards.append(f'<article class="{html.escape(row["status"])}">{image}'
                      f'<b>{html.escape(row["status"])}</b> '
                      f'<span>{html.escape(row["confidence"])}</span>'
@@ -191,7 +196,7 @@ def analyze(args) -> None:
 article{border:2px solid #444;background:#222;padding:8px;overflow:hidden}article.uncertain{border-color:#e0aa45}
 article.crop{border-color:#63b887}article.error{border-color:#d86868}img{width:100%;height:260px;object-fit:contain;background:#111}
 b{display:inline-block;margin:6px 8px 2px 0}span{color:#aaa}article div{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}</style>
-<h1>Scan crop review</h1><p>Red rectangles show proposed boundaries. Uncertain cases appear first.</p><div class="grid">"""
+<h1>Scan crop review</h1><p>Thin red rectangles sit just outside the proposed crop. Uncertain cases appear first.</p><div class="grid">"""
     (args.workspace / "index.html").write_text(gallery + "".join(cards) + "</div>", encoding="utf-8")
     counts = {status: sum(row["status"] == status for row in rows)
               for status in ("crop", "unchanged", "uncertain", "error")}
