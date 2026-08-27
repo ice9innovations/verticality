@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS images (
     confidence REAL,
     prediction_status TEXT NOT NULL,
     reviewed INTEGER NOT NULL DEFAULT 0,
+    unknown INTEGER NOT NULL DEFAULT 0,
     error TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS images_album_idx ON images(album, relative_path);
@@ -59,6 +60,9 @@ def connect(workspace: Path) -> sqlite3.Connection:
         for row in connection.execute("SELECT id, relative_path FROM images"):
             connection.execute("UPDATE images SET group_key=? WHERE id=?",
                                (logical_group_key(Path(row["relative_path"])), row["id"]))
+        connection.commit()
+    if "unknown" not in columns:
+        connection.execute("ALTER TABLE images ADD COLUMN unknown INTEGER NOT NULL DEFAULT 0")
         connection.commit()
     connection.execute("CREATE INDEX IF NOT EXISTS images_group_idx ON images(group_key)")
     return connection
@@ -320,6 +324,7 @@ class ReviewHandler(BaseHTTPRequestHandler):
             if correction not in (0, 90, 180, 270):
                 raise ValueError("correction must be a quarter turn")
             reviewed = 1 if payload.get("reviewed", True) else 0
+            unknown = 1 if payload.get("unknown", False) else 0
             with self.connection_db() as db:
                 if "group_key" in payload:
                     group_key = str(payload["group_key"])
@@ -330,8 +335,8 @@ class ReviewHandler(BaseHTTPRequestHandler):
                         raise KeyError(image_id)
                     group_key = found["group_key"]
                 cursor = db.execute(
-                    "UPDATE images SET selected_correction=?, reviewed=? WHERE group_key=?",
-                    (correction, reviewed, group_key),
+                    "UPDATE images SET selected_correction=?, reviewed=?, unknown=? WHERE group_key=?",
+                    (correction, reviewed, unknown, group_key),
                 )
                 if cursor.rowcount == 0:
                     raise KeyError(group_key)
@@ -370,7 +375,7 @@ def export(args) -> None:
     rows = rows_as_dicts(connection.execute(query))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fields = ["source_path", "relative_path", "album", "predicted_correction",
-              "selected_correction", "confidence", "prediction_status", "reviewed", "error"]
+              "selected_correction", "confidence", "prediction_status", "reviewed", "unknown", "error"]
     with args.output.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -378,7 +383,7 @@ def export(args) -> None:
     print(f"exported {len(rows):,} records to {args.output}")
     if args.corrected_dir:
         for row in tqdm(rows, desc="corrected originals"):
-            if row["error"]:
+            if row["error"] or row["unknown"]:
                 continue
             destination = args.corrected_dir / PurePosixPath(row["relative_path"])
             destination.parent.mkdir(parents=True, exist_ok=True)

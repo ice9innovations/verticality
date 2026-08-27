@@ -129,7 +129,7 @@ Open `http://127.0.0.1:8080`. If the photos are on a remote machine, create an S
 ssh -L 8080:127.0.0.1:8080 user@photo-server
 ```
 
-Albums appear in the sidebar with reviewed/total counts. Use the buttons or keyboard: left/right arrows rotate the selected image, Space or Enter accepts it, and J/K moves through the page. The default view shows only unreviewed images; uncertain and error inputs have a separate filter.
+Albums appear in the sidebar with reviewed/total counts. Use the buttons or keyboard: left/right arrows rotate the selected image, Space or Enter accepts it, and J/K moves through the page. **I don't know** marks an image as reviewed with `unknown=1`; exclude those rows from training. The default view shows only unreviewed images; uncertain and error inputs have a cross-album filter.
 
 Export the reviewed orientation labels without copying photographs:
 
@@ -138,7 +138,7 @@ python review_app.py export --workspace private-review \
   --reviewed-only --output private-review/reviewed-orientations.csv
 ```
 
-The exported `selected_correction` is the final clockwise rotation to apply to the original file. To additionally create full-resolution corrected copies in a separate tree:
+The exported `selected_correction` is the final clockwise rotation to apply to the original file. Rows with `unknown=1` should not be used as orientation labels and are skipped when corrected copies are generated. To additionally create full-resolution corrected copies in a separate tree:
 
 ```bash
 python review_app.py export --workspace private-review \

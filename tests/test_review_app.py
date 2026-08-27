@@ -79,15 +79,17 @@ def test_review_api_persists_each_action(tmp_path):
         assert images["images"][0]["variant_count"] == 2
         image_id = images["images"][0]["id"]
         body = json.dumps({"group_key": images["images"][0]["group_key"],
-                           "selected_correction": 270, "reviewed": True}).encode()
+                           "selected_correction": 270, "reviewed": True,
+                           "unknown": True}).encode()
         request = urllib.request.Request(base + "/api/review", data=body,
                                          headers={"Content-Type": "application/json"}, method="POST")
         updated = json.load(urllib.request.urlopen(request))
         assert updated["selected_correction"] == 270
         assert updated["reviewed"] == 1
+        assert updated["unknown"] == 1
         assert updated["variant_count"] == 2
         with sqlite3.connect(workspace / "review.sqlite3") as db:
-            assert db.execute("SELECT DISTINCT selected_correction, reviewed FROM images").fetchall() == [(270, 1)]
+            assert db.execute("SELECT DISTINCT selected_correction, reviewed, unknown FROM images").fetchall() == [(270, 1, 1)]
     finally:
         server.shutdown()
         thread.join()
