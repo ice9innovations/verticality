@@ -29,12 +29,6 @@ chmod +x download_coco.sh
 
 Equivalent manual commands are in `download_coco.sh`. Annotations are not used. The expected directories are `data/coco/train2017` and `data/coco/val2017`.
 
-## Pretrained experimental checkpoint
-
-The repository may include `checkpoints/best.pt`, a roughly 6 MB checkpoint from the baseline run described here. It was selected at epoch 9 with 94.56% accuracy on the balanced synthetic COCO 2017 validation task. To use it, clone the repository and pass `--checkpoint checkpoints/best.pt` to either command below; no COCO download is required for inference.
-
-The checkpoint contains learned parameters, not copies of training photographs. It was fine-tuned on COCO 2017 images from TorchVision's ImageNet-pretrained MobileNetV3-Small weights. Dataset and pretrained-weight terms can carry separate usage or redistribution considerations; inclusion here should not be interpreted as a legal determination for every use. Review the applicable COCO image, ImageNet, and TorchVision terms, particularly before commercial redistribution.
-
 ## Train and validate
 
 ```bash
