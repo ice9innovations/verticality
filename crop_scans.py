@@ -48,9 +48,14 @@ def detect_photo(image: Image.Image, analysis_size: int = 1200,
     pixels = np.asarray(preview, dtype=np.int16)
     height, width = pixels.shape[:2]
     border = np.concatenate((pixels[0], pixels[-1], pixels[:, 0], pixels[:, -1]))
-    background = np.median(border, axis=0)
+    # A photograph may touch one or two page edges. Estimate paper from the
+    # brightest border segments instead of allowing the photo to dominate the
+    # median border color.
+    border_luminance = border.mean(axis=1)
+    bright_border = border[border_luminance >= np.percentile(border_luminance, 70)]
+    background = np.median(bright_border, axis=0)
     border_distance = np.max(np.abs(border - background), axis=1)
-    white_background = float(background.mean()) >= 200 and float((border_distance < color_distance).mean()) >= 0.65
+    white_background = float(background.mean()) >= 200 and float((border_distance < color_distance).mean()) >= 0.20
     if not white_background:
         return {"status": "unchanged", "confidence": 1.0,
                 "reason": "no uniform light page border",
@@ -118,11 +123,17 @@ def analyze_one(task) -> dict:
                     "width": image.width, "height": image.height, "reason": result["reason"]})
         shown = image.copy()
         shown.thumbnail((700, 700), Image.Resampling.LANCZOS)
-        if result["status"] in ("crop", "uncertain"):
+        if result["status"] != "error":
             scale_x, scale_y = shown.width / image.width, shown.height / image.height
+            display_box = [round(value * scale) for value, scale in zip(
+                box, (scale_x, scale_y, scale_x, scale_y))]
+            # Keep full-frame proposals visibly inside the preview rather than
+            # drawing on a clipped outermost pixel.
+            display_box = [max(3, display_box[0]), max(3, display_box[1]),
+                           min(shown.width - 4, display_box[2]),
+                           min(shown.height - 4, display_box[3])]
             draw = ImageDraw.Draw(shown)
-            draw.rectangle(tuple(round(value * scale) for value, scale in zip(
-                box, (scale_x, scale_y, scale_x, scale_y))), outline=(255, 45, 45), width=5)
+            draw.rectangle(display_box, outline=(255, 35, 35), width=7)
         destination = preview_path(workspace, source)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shown.save(destination, "JPEG", quality=82)

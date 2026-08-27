@@ -30,3 +30,15 @@ def test_ignores_scanner_speckles_across_white_page():
     result = detect_photo(page)
     assert result["status"] == "crop"
     assert result["box"][2] < 500
+
+
+def test_detects_photo_touching_top_and_left_page_edges():
+    page = Image.new("RGB", (1000, 800), (248, 247, 244))
+    ImageDraw.Draw(page).rectangle((0, 0, 430, 360), fill=(110, 70, 55))
+    result = detect_photo(page)
+    assert result["status"] == "crop"
+    left, top, right, bottom = result["box"]
+    assert left == 0
+    assert top == 0
+    assert abs(right - 431) < 10
+    assert abs(bottom - 361) < 10
