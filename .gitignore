@@ -3,6 +3,7 @@ __pycache__/
 data/
 checkpoints/
 private-review/
+private-crops/
 *.py[codz]
 *$py.class
 

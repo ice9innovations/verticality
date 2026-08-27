@@ -165,6 +165,31 @@ python train.py \
 
 The original checkpoint is only read; the best family-photo validation checkpoint is written separately to `checkpoints/family-best.pt`.
 
+## Non-destructive white-page scan cropping
+
+Analyze one or more scan albums without changing any source file. The detector crops only when it finds a convincing white page around one photograph; edge-to-edge scans are marked unchanged and ambiguous pages are marked uncertain.
+
+```bash
+python crop_scans.py analyze \
+  --input "/path/to/Album 1" \
+  --input "/path/to/Album 2" \
+  --workspace private-crops \
+  --workers 8
+```
+
+Review `private-crops/index.html` and `private-crops/crop-report.csv`. Red rectangles are proposed crop boundaries. The workspace is ignored by Git. You can manually change a CSV row's status before applying it; only rows whose status is `crop` are cropped.
+
+Write cropped files to a separate directory, optionally copying scans marked unchanged so the output is a complete mirrored collection:
+
+```bash
+python crop_scans.py apply \
+  --report private-crops/crop-report.csv \
+  --output /path/to/cropped-scans \
+  --copy-unchanged
+```
+
+Rows marked uncertain or error are skipped. TIFF output uses lossless LZW compression, and source files are never modified.
+
 ## Experimental caveats
 
 COCO is only assumed to be normally oriented; occasional mislabeled source orientation becomes label noise. A confidence threshold is not a calibration guarantee. Evaluate on a separately curated wild-photo set (including all four rotations per source) before interpreting generalization, and inspect confusion between 0°/180° and 90°/270° rather than relying only on overall accuracy.
