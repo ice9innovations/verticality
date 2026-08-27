@@ -5,14 +5,20 @@ from __future__ import annotations
 
 import argparse
 import csv
+import warnings
 from pathlib import Path
 
 import torch
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 from dataset import CORRECTION_DEGREES, IMAGE_EXTENSIONS, ImagePreprocessor, image_paths, rotate_clockwise
 from model import load_model
 from utils import choose_device
+
+CSV_FIELDS = [
+    "path", "predicted_correction", "status", "probability_0", "probability_90",
+    "probability_180", "probability_270", "confidence", "error",
+]
 
 
 def parse_args():
@@ -41,8 +47,20 @@ def main() -> None:
     preprocess = ImagePreprocessor(size=int(checkpoint.get("image_size", 224)), augment=False)
     rows = []
     for path in paths:
-        with Image.open(path) as opened:
-            image = opened.convert("RGB")  # Deliberately ignore EXIF orientation metadata.
+        try:
+            # EXIF is deliberately ignored, so malformed EXIF warnings are not useful.
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message=r"Corrupt EXIF data.*", category=UserWarning)
+                with Image.open(path) as opened:
+                    image = opened.convert("RGB")
+                    image.load()  # Surface lazy decoder failures here so the run can continue.
+        except (UnidentifiedImageError, OSError, ValueError) as exc:
+            error = f"{type(exc).__name__}: {exc}"
+            print(f"{path}\nstatus: error\nerror: {error}")
+            rows.append({"path": str(path), "predicted_correction": "", "status": "error",
+                         "probability_0": "", "probability_90": "", "probability_180": "",
+                         "probability_270": "", "confidence": "", "error": error})
+            continue
         tensor = preprocess(image).unsqueeze(0).to(device)
         with torch.inference_mode():
             probabilities = model(tensor).softmax(1)[0].cpu().tolist()
@@ -54,7 +72,7 @@ def main() -> None:
         rows.append({"path": str(path), "predicted_correction": correction, "status": status,
                      "probability_0": probabilities[0], "probability_90": probabilities[1],
                      "probability_180": probabilities[2], "probability_270": probabilities[3],
-                     "confidence": confidence})
+                     "confidence": confidence, "error": ""})
         if args.output_dir:
             relative = path.relative_to(base)
             destination = args.output_dir / relative
@@ -63,7 +81,7 @@ def main() -> None:
     csv_path = args.csv or ((args.output_dir / "predictions.csv") if args.output_dir else Path("predictions.csv"))
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer = csv.DictWriter(handle, fieldnames=CSV_FIELDS)
         writer.writeheader()
         writer.writerows(rows)
     print(f"wrote CSV: {csv_path}")
@@ -71,4 +89,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
