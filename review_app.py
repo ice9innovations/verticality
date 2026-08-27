@@ -373,6 +373,15 @@ def export(args) -> None:
     connection = connect(args.workspace)
     query = "SELECT * FROM images" + (" WHERE reviewed = 1" if args.reviewed_only else "") + " ORDER BY relative_path"
     rows = rows_as_dicts(connection.execute(query))
+    # The review UI presents each base scan as the representative for its *_a
+    # enhancement. Apply that reviewed/base decision to every physical variant.
+    group_corrections = {}
+    for row in rows:
+        is_enhancement = Path(row["relative_path"]).stem.lower().endswith("_a")
+        if row["group_key"] not in group_corrections or not is_enhancement:
+            group_corrections[row["group_key"]] = row["selected_correction"]
+    for row in rows:
+        row["selected_correction"] = group_corrections[row["group_key"]]
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fields = ["source_path", "relative_path", "album", "predicted_correction",
               "selected_correction", "confidence", "prediction_status", "reviewed", "unknown", "error"]

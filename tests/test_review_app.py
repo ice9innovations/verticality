@@ -61,6 +61,20 @@ def test_prepare_preserves_album_rotation_and_manual_review(tmp_path):
         assert db.execute("SELECT DISTINCT selected_correction, reviewed FROM images").fetchall() == [(180, 1)]
 
 
+def test_export_applies_base_orientation_to_enhancement(tmp_path):
+    _, workspace = make_workspace(tmp_path)
+    with sqlite3.connect(workspace / "review.sqlite3") as db:
+        db.execute("UPDATE images SET selected_correction=90 WHERE relative_path LIKE '%photo.png'")
+        db.execute("UPDATE images SET selected_correction=270 WHERE relative_path LIKE '%photo_a.png'")
+        db.commit()
+    output = tmp_path / "normalized.csv"
+    review_app.export(argparse.Namespace(workspace=workspace, output=output,
+                                         reviewed_only=False, corrected_dir=None))
+    with output.open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert [row["selected_correction"] for row in rows] == ["90", "90"]
+
+
 def test_review_api_persists_each_action(tmp_path):
     _, workspace = make_workspace(tmp_path)
     handler = type("TestReviewHandler", (review_app.ReviewHandler,), {

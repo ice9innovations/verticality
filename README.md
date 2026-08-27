@@ -138,7 +138,7 @@ python review_app.py export --workspace private-review \
   --reviewed-only --output private-review/reviewed-orientations.csv
 ```
 
-The exported `selected_correction` is the final clockwise rotation to apply to the original file. Rows with `unknown=1` should not be used as orientation labels and are skipped when corrected copies are generated. To additionally create full-resolution corrected copies in a separate tree:
+The exported `selected_correction` is the final clockwise rotation to apply to the original file. The base scan's final orientation is automatically copied to its `_a` enhancement in the export. Rows with `unknown=1` should not be used as orientation labels and are skipped when corrected copies are generated. To additionally create full-resolution corrected copies in a separate tree:
 
 ```bash
 python review_app.py export --workspace private-review \
