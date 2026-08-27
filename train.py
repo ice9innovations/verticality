@@ -114,8 +114,18 @@ def main() -> None:
     train_loader = loader(train_data, args.batch_size, args.workers, True, args.seed)
     optimizer = AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
-    best_accuracy = -1.0
     args.checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    best_accuracy = -1.0
+    if review_mode:
+        baseline_loss, best_accuracy, baseline_metrics = run_epoch(
+            model, val_loader, device, criterion)
+        print(f"baseline: val loss={baseline_loss:.4f} accuracy={best_accuracy:.4f}")
+        print(baseline_metrics.report())
+        torch.save({"model_state": model.state_dict(), "epoch": 0,
+                    "val_accuracy": best_accuracy, "image_size": args.image_size,
+                    "classes": [0, 90, 180, 270], "fine_tuned": False,
+                    "initial_checkpoint": str(args.init_checkpoint)}, args.checkpoint)
+        print(f"saved baseline checkpoint: {args.checkpoint}")
     for epoch in range(1, args.epochs + 1):
         train_loss, train_accuracy, _ = run_epoch(model, train_loader, device, criterion, optimizer)
         val_loss, val_accuracy, metrics = run_epoch(model, val_loader, device, criterion)
