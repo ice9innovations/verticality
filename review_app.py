@@ -11,6 +11,7 @@ import mimetypes
 import sqlite3
 import sys
 import warnings
+from concurrent.futures import ProcessPoolExecutor
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
@@ -38,6 +39,13 @@ CREATE TABLE IF NOT EXISTS images (
 );
 CREATE INDEX IF NOT EXISTS images_album_idx ON images(album, relative_path);
 """
+
+
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return parsed
 
 
 def connect(workspace: Path) -> sqlite3.Connection:
@@ -91,14 +99,34 @@ def logical_group_key(relative_path: Path) -> str:
     return (relative_path.parent / f"{stem}{relative_path.suffix.lower()}").as_posix()
 
 
+def generate_thumbnail(task: tuple[str, str, int, int]) -> str:
+    """Decode and resize one image in a worker process; return an error message or ''."""
+    source, destination, correction, thumbnail_size = task
+    try:
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r"Corrupt EXIF data.*", category=UserWarning)
+            with Image.open(source) as opened:
+                image = opened.convert("RGB")
+                image.load()
+        image.thumbnail((thumbnail_size, thumbnail_size), Image.Resampling.LANCZOS)
+        image = rotate_clockwise(image, correction)
+        destination_path = Path(destination)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(destination_path, "JPEG", quality=85)
+        return ""
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+
+
 def prepare(args) -> None:
     root = args.images.resolve()
     predictions = load_predictions(args.predictions)
     connection = connect(args.workspace)
     thumbnails = args.workspace / "thumbnails"
     paths = image_paths(root)
-    prepared = errors = 0
-    for index, path in enumerate(tqdm(paths, desc="thumbnails"), 1):
+    records = []
+    tasks = []
+    for path in paths:
         absolute = path.resolve()
         relative = absolute.relative_to(root)
         group_key = logical_group_key(relative)
@@ -116,23 +144,31 @@ def prepare(args) -> None:
         ).fetchone()
         regenerate = (not thumb_path.exists() or existing is None
                       or existing["predicted_correction"] != correction or not existing["thumbnail"])
-        try:
-            if regenerate:
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", message=r"Corrupt EXIF data.*", category=UserWarning)
-                    with Image.open(absolute) as opened:
-                        image = opened.convert("RGB")
-                        image.load()
-                image.thumbnail((args.thumbnail_size, args.thumbnail_size), Image.Resampling.LANCZOS)
-                image = rotate_clockwise(image, correction)
-                thumb_path.parent.mkdir(parents=True, exist_ok=True)
-                image.save(thumb_path, "JPEG", quality=85, optimize=True)
-            prepared += 1
-        except (UnidentifiedImageError, OSError, ValueError) as exc:
+        records.append((absolute, relative, group_key, correction, status, confidence_value,
+                        thumb_rel, error, regenerate))
+        if regenerate:
+            tasks.append((str(absolute), str(thumb_path), correction, args.thumbnail_size))
+
+    workers = getattr(args, "workers", 1)
+    if workers == 1:
+        task_errors = map(generate_thumbnail, tasks)
+        executor = None
+    else:
+        executor = ProcessPoolExecutor(max_workers=workers)
+        task_errors = executor.map(generate_thumbnail, tasks)
+    generated_errors = iter(tqdm(task_errors, total=len(tasks), desc="thumbnails"))
+
+    prepared = errors = 0
+    for index, record in enumerate(records, 1):
+        absolute, relative, group_key, correction, status, confidence_value, thumb_rel, error, regenerate = record
+        thumbnail_error = next(generated_errors) if regenerate else ""
+        if thumbnail_error:
             thumb_rel = None
-            error = f"{type(exc).__name__}: {exc}"
+            error = thumbnail_error
             status = "error"
             errors += 1
+        else:
+            prepared += 1
         album = relative.parent.as_posix()
         if album == ".":
             album = "(root)"
@@ -150,6 +186,8 @@ def prepare(args) -> None:
               confidence_value, status, error))
         if index % 100 == 0:
             connection.commit()
+    if executor is not None:
+        executor.shutdown()
     connection.commit()
     print(f"indexed={len(paths):,} thumbnails={prepared:,} errors={errors:,} workspace={args.workspace}")
 
@@ -360,6 +398,8 @@ def parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--predictions", type=Path, required=True)
     prepare_parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)
     prepare_parser.add_argument("--thumbnail-size", type=int, default=320)
+    prepare_parser.add_argument("--workers", type=positive_int, default=1, metavar="N",
+                                help="use N parallel image-decoding workers")
     prepare_parser.set_defaults(function=prepare)
     serve_parser = commands.add_parser("serve", help="serve the private review UI")
     serve_parser.add_argument("--workspace", type=Path, default=DEFAULT_WORKSPACE)

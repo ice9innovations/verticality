@@ -111,10 +111,11 @@ After directory inference has produced a CSV, prepare the review workspace:
 python review_app.py prepare \
   --images /path/to/photos \
   --predictions results/predictions.csv \
-  --workspace private-review
+  --workspace private-review \
+  --workers 8
 ```
 
-Preparation is resumable. Run it again after an interrupted thumbnail pass or after the inference CSV gains more rows. Existing thumbnails and manual reviews are preserved.
+`--workers` parallelizes image decoding and thumbnail generation; 8 is a reasonable starting point on a multicore machine. Preparation is resumable. Run it again after an interrupted thumbnail pass or after the inference CSV gains more rows. Existing thumbnails and manual reviews are preserved.
 
 Start the web application, bound only to the local machine:
 

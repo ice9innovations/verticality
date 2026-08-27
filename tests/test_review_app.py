@@ -33,9 +33,16 @@ def make_workspace(tmp_path):
                          "confidence": 0.8})
     workspace = tmp_path / "private-review"
     args = argparse.Namespace(images=photos, predictions=predictions,
-                              workspace=workspace, thumbnail_size=32)
+                              workspace=workspace, thumbnail_size=32, workers=1)
     review_app.prepare(args)
     return args, workspace
+
+
+def test_prepare_parser_accepts_arbitrary_worker_count():
+    args = review_app.parser().parse_args([
+        "prepare", "--images", "photos", "--predictions", "predictions.csv", "--workers", "13",
+    ])
+    assert args.workers == 13
 
 
 def test_prepare_preserves_album_rotation_and_manual_review(tmp_path):
