@@ -29,6 +29,12 @@ chmod +x download_coco.sh
 
 Equivalent manual commands are in `download_coco.sh`. Annotations are not used. The expected directories are `data/coco/train2017` and `data/coco/val2017`.
 
+## Pretrained experimental checkpoint
+
+The repository may include `checkpoints/best.pt`, a roughly 6 MB checkpoint from the baseline run described here. It was selected at epoch 9 with 94.56% accuracy on the balanced synthetic COCO 2017 validation task. To use it, clone the repository and pass `--checkpoint checkpoints/best.pt` to either command below; no COCO download is required for inference.
+
+The checkpoint contains learned parameters, not copies of training photographs. It was fine-tuned on COCO 2017 images from TorchVision's ImageNet-pretrained MobileNetV3-Small weights. Dataset and pretrained-weight terms can carry separate usage or redistribution considerations; inclusion here should not be interpreted as a legal determination for every use. Review the applicable COCO image, ImageNet, and TorchVision terms, particularly before commercial redistribution.
+
 ## Train and validate
 
 ```bash
@@ -67,7 +73,34 @@ python infer.py photos --checkpoint checkpoints/best.pt \
 
 Low-confidence results are marked `uncertain`. Corrected files are written under a separate output tree and sources are never modified. Predictions still appear in the CSV so threshold behavior can be analyzed later.
 
+### CPU inference and large source images
+
+Inference selects CUDA, then Apple MPS, then CPU by default. To force CPU inference, even on a machine with a supported GPU:
+
+```bash
+python infer.py photos \
+  --checkpoint checkpoints/best.pt \
+  --device cpu \
+  --confidence-threshold 0.75 \
+  --csv results/predictions.csv
+```
+
+CPU inference is slower but otherwise produces the same output format. Image decoding and resizing already occur on the CPU regardless of the model device.
+
+Large JPEG and TIFF sources are converted to RGB, resized with their aspect ratio preserved so the longest side is 224 pixels, and letterboxed to 224×224 before classification. Model memory therefore does not scale with source dimensions. Pillow must still decode the complete source image before resizing it, so a very large TIFF can temporarily require substantial CPU memory and take noticeably longer to load. Images are processed sequentially during inference rather than retained as a batch.
+
+For a large collection, a CSV-only first pass avoids duplicating every photograph:
+
+```bash
+python infer.py photos \
+  --checkpoint checkpoints/best.pt \
+  --device cpu \
+  --confidence-threshold 0.75 \
+  --csv results/predictions.csv
+```
+
+Add `--output-dir results/corrected` only when corrected copies are wanted. Keep the output directory outside the input tree, and ensure enough storage is available. Source photographs are never overwritten.
+
 ## Experimental caveats
 
 COCO is only assumed to be normally oriented; occasional mislabeled source orientation becomes label noise. A confidence threshold is not a calibration guarantee. Evaluate on a separately curated wild-photo set (including all four rotations per source) before interpreting generalization, and inspect confusion between 0°/180° and 90°/270° rather than relying only on overall accuracy.
-
